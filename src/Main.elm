@@ -17,13 +17,20 @@ import PlanParsers.Json exposing (..)
 type Page
     = DisplayPage
     | InputPage
+    | LoginPage
 
 
 type Msg
-    = NoOp
+    = ChangePassword String
+    | ChangeUserName String
+    | ChangeEmail String
     | ChangePlanText String
+    | CreatePlan
     | MouseEnteredPlanNode Plan
     | MouseLeftPlanNode Plan
+    | NoOp
+    | RequestLogin
+    | StartLogin
     | SubmitPlan
     | ToggleMenu
 
@@ -33,6 +40,10 @@ type alias Model =
     , currPlanText : String
     , selectedNode : Maybe Plan
     , isMenuOpen : Bool
+    , password : String
+    , username : String
+    , email : String
+    , lastError : String
     }
 
 
@@ -46,6 +57,10 @@ init _ =
       , currPlanText = ""
       , selectedNode = Nothing
       , isMenuOpen = False
+      , password = ""
+      , username = ""
+      , email = ""
+      , lastError = ""
       }
     , Cmd.none
     )
@@ -67,8 +82,20 @@ subscriptions model =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
+        ChangePassword s ->
+            ( { model | password = s }, Cmd.none )
+
+        ChangeUserName s ->
+            ( { model | username = s }, Cmd.none )
+
+        ChangeEmail s ->
+            ( { model | email = s }, Cmd.none )
+
         ChangePlanText s ->
             ( { model | currPlanText = s }, Cmd.none )
+
+        CreatePlan ->
+            ( { model | currPage = InputPage, currPlanText = "" }, Cmd.none )
 
         MouseEnteredPlanNode plan ->
             ( { model | selectedNode = Just plan }, Cmd.none )
@@ -77,6 +104,12 @@ update msg model =
             ( { model | selectedNode = Nothing }, Cmd.none )
 
         NoOp ->
+            ( model, Cmd.none )
+
+        RequestLogin ->
+            ( { model | currPage = LoginPage, password = "", username = "", email = "" }, Cmd.none )
+
+        StartLogin ->
             ( model, Cmd.none )
 
         SubmitPlan ->
@@ -100,6 +133,9 @@ view model =
 
                 InputPage ->
                     inputPage model
+
+                LoginPage ->
+                    loginPage model
     in
     { title = "VisExp"
     , body =
@@ -110,6 +146,36 @@ view model =
                 ]
         ]
     }
+
+
+loginPage : Model -> Element Msg
+loginPage model =
+    column [ paddingXY 0 20, spacingXY 0 10, width (px 300), centerX ]
+        [ Input.username Attr.input
+            { onChange = ChangeUserName
+            , text = model.username
+            , label = Input.labelAbove [] <| text "User name:"
+            , placeholder = Nothing
+            }
+        , Input.currentPassword Attr.input
+            { onChange = ChangePassword
+            , text = model.password
+            , label = Input.labelAbove [] <| text "Password:"
+            , placeholder = Nothing
+            , show = False
+            }
+        , Input.email Attr.input
+            { onChange = ChangeEmail
+            , text = model.email
+            , label = Input.labelAbove [] <| text "Email:"
+            , placeholder = Nothing
+            }
+        , Input.button Attr.greenButton
+            { onPress = Just StartLogin
+            , label = el [ centerX ] <| text "Login"
+            }
+        , el Attr.error <| text model.lastError
+        ]
 
 
 displayPage : Model -> Element Msg
@@ -307,8 +373,8 @@ menuPanel model =
     let
         items =
             -- TODO: Fix this to emit the right actions
-            [ el [ pointer, onClick NoOp ] <| text "New plan"
-            , el [ pointer, onClick NoOp ] <| text "Login"
+            [ el [ pointer, onClick CreatePlan ] <| text "New plan"
+            , el [ pointer, onClick RequestLogin ] <| text "Login"
             ]
 
         panel =

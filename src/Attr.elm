@@ -7,6 +7,11 @@ import Element.Border as Border
 import Element.Font as Font
 
 
+error : List (Attribute msg)
+error =
+    [ Font.color red ]
+
+
 greenButton : List (Attribute msg)
 greenButton =
     [ Background.color green
@@ -30,3 +35,8 @@ greyButton =
     , Font.bold
     , Font.color darkCharcoal
     ]
+
+
+input : List (Attribute msg)
+input =
+    [ Border.width 1, Border.rounded 3, Border.color lightCharcoal, padding 3 ]
