@@ -233,17 +233,28 @@ sendHeartbeat sessionId =
 
 keyDecoder : Model -> Json.Decode.Decoder Msg
 keyDecoder model =
-    Json.Decode.field "key" Json.Decode.string
-        |> Json.Decode.map (keyToMsg model)
+    Json.Decode.map2 Tuple.pair
+        (Json.Decode.field "altKey" Json.Decode.bool)
+        (Json.Decode.field "shiftKey" Json.Decode.bool)
+        |> Json.Decode.andThen
+            (\altAndShiftFlags ->
+                case altAndShiftFlags of
+                    ( True, True ) ->
+                        Json.Decode.field "code" Json.Decode.string
+                            |> Json.Decode.map (keyToMsg model)
+
+                    _ ->
+                        Json.Decode.succeed NoOp
+            )
 
 
 keyToMsg : Model -> String -> Msg
-keyToMsg model s =
-    case ( s, model.sessionId ) of
-        ( "s", Just id ) ->
+keyToMsg model code =
+    case ( code, model.sessionId ) of
+        ( "KeyS", Just id ) ->
             RequestSavedPlans
 
-        ( "n", _ ) ->
+        ( "KeyN", _ ) ->
             CreatePlan
 
         _ ->
