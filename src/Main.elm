@@ -103,7 +103,7 @@ view model =
     in
     { title = "VisExp"
     , body =
-        [ layout [] <|
+        [ layout [ inFront <| menuPanel model ] <|
             column [ width fill, spacingXY 0 20 ]
                 [ navBar
                 , content
@@ -300,6 +300,46 @@ planNodeTree plan =
                 [ text " on "
                 , el [ Font.italic ] <| text <| String.join ", " sortNode.sortKey
                 ]
+
+
+menuPanel : Model -> Element Msg
+menuPanel model =
+    let
+        items =
+            -- TODO: Fix this to emit the right actions
+            [ el [ pointer, onClick NoOp ] <| text "New plan"
+            , el [ pointer, onClick NoOp ] <| text "Login"
+            ]
+
+        panel =
+            column
+                [ Background.color Color.white
+                , Border.widthEach { left = 1, right = 0, top = 0, bottom = 0 }
+                , Border.color Color.grey
+                , Border.shadow
+                    { offset = ( 0, 0 )
+                    , size = 1
+                    , blur = 10
+                    , color = Color.lightCharcoal
+                    }
+                , Font.bold
+                , Font.color Color.darkCharcoal
+                , Font.family [ Font.sansSerif ]
+                , width <| fillPortion 1
+                , height fill
+                , paddingXY 20 20
+                , spacingXY 0 20
+                ]
+                items
+
+        overlay =
+            el [ width <| fillPortion 4, height fill, onClick ToggleMenu ] none
+    in
+    if model.isMenuOpen then
+        row [ width fill, height fill ] [ overlay, panel ]
+
+    else
+        none
 
 
 childNodeTree : Plans -> Element Msg
