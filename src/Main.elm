@@ -10,7 +10,9 @@ import Element.Events exposing (..)
 import Element.Font as Font
 import Element.Input as Input
 import Html
+import Http
 import Json.Decode
+import Json.Encode
 import PlanParsers.Json exposing (..)
 
 
@@ -18,6 +20,7 @@ type Page
     = DisplayPage
     | InputPage
     | LoginPage
+    | SavedPlansPage
 
 
 type Msg
@@ -26,11 +29,16 @@ type Msg
     | ChangeEmail String
     | ChangePlanText String
     | CreatePlan
+    | FinishLogin (Result Http.Error String)
+    | FinishSavedPlans (Result Http.Error (List SavedPlan))
     | MouseEnteredPlanNode Plan
     | MouseLeftPlanNode Plan
     | NoOp
     | RequestLogin
+    | RequestLogout
+    | RequestSavedPlans
     | StartLogin
+    | ShowPlan String
     | SubmitPlan
     | ToggleMenu
 
@@ -38,12 +46,14 @@ type Msg
 type alias Model =
     { currPage : Page
     , currPlanText : String
-    , selectedNode : Maybe Plan
-    , isMenuOpen : Bool
-    , password : String
-    , username : String
     , email : String
+    , isMenuOpen : Bool
     , lastError : String
+    , password : String
+    , savedPlans : List SavedPlan
+    , selectedNode : Maybe Plan
+    , sessionId : Maybe String
+    , username : String
     }
 
 
@@ -55,15 +65,21 @@ init : Flags -> ( Model, Cmd Msg )
 init _ =
     ( { currPage = InputPage
       , currPlanText = ""
-      , selectedNode = Nothing
-      , isMenuOpen = False
-      , password = ""
-      , username = ""
       , email = ""
+      , isMenuOpen = False
       , lastError = ""
+      , password = ""
+      , savedPlans = []
+      , selectedNode = Nothing
+      , sessionId = Nothing
+      , username = ""
       }
     , Cmd.none
     )
+
+
+serverUrl =
+    "http://localhost:3001"
 
 
 
@@ -97,6 +113,18 @@ update msg model =
         CreatePlan ->
             ( { model | currPage = InputPage, currPlanText = "" }, Cmd.none )
 
+        FinishLogin (Ok sessionId) ->
+            ( { model | sessionId = Just sessionId, currPage = InputPage }, Cmd.none )
+
+        FinishLogin (Err error) ->
+            ( { model | lastError = httpErrorString error }, Cmd.none )
+
+        FinishSavedPlans (Ok savedPlans) ->
+            ( { model | savedPlans = savedPlans }, Cmd.none )
+
+        FinishSavedPlans (Err error) ->
+            ( { model | lastError = httpErrorString error }, Cmd.none )
+
         MouseEnteredPlanNode plan ->
             ( { model | selectedNode = Just plan }, Cmd.none )
 
@@ -109,14 +137,89 @@ update msg model =
         RequestLogin ->
             ( { model | currPage = LoginPage, password = "", username = "", email = "" }, Cmd.none )
 
-        StartLogin ->
+        -- TODO fix this
+        RequestLogout ->
             ( model, Cmd.none )
+
+        RequestSavedPlans ->
+            ( { model | currPage = SavedPlansPage }
+            , getSavedPlans model.sessionId
+            )
+
+        ShowPlan planText ->
+            ( { model | currPlanText = planText, currPage = DisplayPage }
+            , Cmd.none
+            )
+
+        StartLogin ->
+            ( model, login model.username model.password )
 
         SubmitPlan ->
             ( { model | currPage = DisplayPage }, Cmd.none )
 
         ToggleMenu ->
             ( { model | isMenuOpen = not model.isMenuOpen }, Cmd.none )
+
+
+
+-- EFFECTS
+
+
+login : String -> String -> Cmd Msg
+login username password =
+    let
+        body =
+            Http.jsonBody <|
+                Json.Encode.object
+                    [ ( "userName", Json.Encode.string username )
+                    , ( "password", Json.Encode.string password )
+                    ]
+
+        responseDecoder =
+            Json.Decode.field "sessionId" Json.Decode.string
+    in
+    Http.post
+        { url = serverUrl ++ "login"
+        , body = body
+        , expect = Http.expectJson FinishLogin responseDecoder
+        }
+
+
+getSavedPlans : Maybe String -> Cmd Msg
+getSavedPlans sessionId =
+    Http.request
+        { method = "GET"
+        , headers =
+            [ Http.header "SessionId" <| Maybe.withDefault "" sessionId ]
+        , url = serverUrl ++ "plans"
+        , body = Http.emptyBody
+        , timeout = Nothing
+        , tracker = Nothing
+        , expect = Http.expectJson FinishSavedPlans decodeSavedPlans
+        }
+
+
+
+-- FUNCTIONS
+
+
+httpErrorString : Http.Error -> String
+httpErrorString error =
+    case error of
+        Http.BadBody message ->
+            "Unable to handle response: " ++ message
+
+        Http.BadStatus statusCode ->
+            "Server error: " ++ String.fromInt statusCode
+
+        Http.BadUrl url ->
+            "invalid URL: " ++ url
+
+        Http.NetworkError ->
+            "Network error"
+
+        Http.Timeout ->
+            "Request timeout"
 
 
 
@@ -136,6 +239,9 @@ view model =
 
                 LoginPage ->
                     loginPage model
+
+                SavedPlansPage ->
+                    savedPlansPage model
     in
     { title = "VisExp"
     , body =
@@ -318,6 +424,61 @@ inputPage model =
         ]
 
 
+savedPlansPage : Model -> Element Msg
+savedPlansPage model =
+    let
+        annotateVersionName name planVersion =
+            { version = planVersion.version
+            , planText = planVersion.planText
+            , createdAt = planVersion.createdAt
+            , name = name
+            }
+
+        annotateVersions savedPlan =
+            List.map (annotateVersionName savedPlan.name) savedPlan.versions
+
+        tableAttrs =
+            [ width (px 800)
+            , paddingEach { top = 10, bottom = 50, left = 10, right = 10 }
+            , spacingXY 10 10
+            , centerX
+            ]
+
+        headerAttrs =
+            [ Font.bold
+            , Background.color Color.lightGrey
+            , Border.color Color.darkCharcoal
+            , Border.widthEach { bottom = 1, top = 0, left = 0, right = 0 }
+            , centerX
+            ]
+    in
+    table tableAttrs
+        { data = List.concatMap annotateVersions model.savedPlans
+        , columns =
+            [ { header = el headerAttrs <| text "Plan name"
+              , width = fill
+              , view =
+                    \plan ->
+                        el
+                            [ Font.underline
+                            , mouseOver [ Font.color lightCharcoal ]
+                            , onClick <| ShowPlan plan.planText
+                            ]
+                        <|
+                            text plan.name
+              }
+            , { header = el headerAttrs <| text "Creation time"
+              , width = fill
+              , view = .createdAt >> text
+              }
+            , { header = el headerAttrs <| text "Version"
+              , width = fill
+              , view = .version >> String.fromInt >> text
+              }
+            ]
+        }
+
+
 planNodeTree : Plan -> List (Element Msg)
 planNodeTree plan =
     let
@@ -373,9 +534,17 @@ menuPanel model =
     let
         items =
             -- TODO: Fix this to emit the right actions
-            [ el [ pointer, onClick CreatePlan ] <| text "New plan"
-            , el [ pointer, onClick RequestLogin ] <| text "Login"
-            ]
+            [ el [ pointer, onClick CreatePlan ] <| text "New plan" ]
+                ++ (case model.sessionId of
+                        Just _ ->
+                            [ el [ pointer, onClick RequestSavedPlans ] <|
+                                text "Saved plans"
+                            , el [ pointer, onClick RequestLogout ] <| text "Logout"
+                            ]
+
+                        Nothing ->
+                            [ el [ pointer, onClick RequestLogin ] <| text "Login" ]
+                   )
 
         panel =
             column
