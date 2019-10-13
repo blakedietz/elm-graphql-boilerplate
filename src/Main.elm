@@ -1,5 +1,6 @@
 module Main exposing (main)
 
+import Attr
 import Browser
 import Color exposing (..)
 import Element exposing (..)
@@ -24,12 +25,14 @@ type Msg
     | MouseEnteredPlanNode Plan
     | MouseLeftPlanNode Plan
     | SubmitPlan
+    | ToggleMenu
 
 
 type alias Model =
     { currPage : Page
     , currPlanText : String
     , selectedNode : Maybe Plan
+    , isMenuOpen : Bool
     }
 
 
@@ -42,6 +45,7 @@ init _ =
     ( { currPage = InputPage
       , currPlanText = ""
       , selectedNode = Nothing
+      , isMenuOpen = False
       }
     , Cmd.none
     )
@@ -77,6 +81,9 @@ update msg model =
 
         SubmitPlan ->
             ( { model | currPage = DisplayPage }, Cmd.none )
+
+        ToggleMenu ->
+            ( { model | isMenuOpen = not model.isMenuOpen }, Cmd.none )
 
 
 
@@ -208,7 +215,10 @@ navBar =
         , Border.color blue
         ]
         [ el [ alignLeft ] <| text "VisExp"
-        , el [ alignRight ] <| text "Menu"
+        , Input.button (Attr.greyButton ++ [ padding 5, alignRight, width (px 80) ])
+            { onPress = Just ToggleMenu
+            , label = el [ centerX ] <| text "Menu"
+            }
         ]
 
 
@@ -235,17 +245,7 @@ inputPage model =
             , spellcheck = False
             }
         , Input.button
-            [ Background.color green
-            , Border.color darkGreen
-            , Border.rounded 3
-            , Border.widthEach { bottom = 3, top = 0, right = 0, left = 0 }
-            , Font.bold
-            , Font.color white
-            , paddingXY 20 6
-            , alignRight
-            , width (px 200)
-            , height (px 40)
-            ]
+            (Attr.greenButton ++ [ alignRight, width (px 200), height (px 40) ])
             { onPress = Just SubmitPlan
             , label = el [ centerX ] <| text "Go!"
             }
