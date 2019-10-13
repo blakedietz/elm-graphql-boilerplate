@@ -2,6 +2,7 @@ module Main exposing (main)
 
 import Attr
 import Browser
+import Browser.Events exposing (onKeyPress)
 import Color exposing (..)
 import Element exposing (..)
 import Element.Background as Background
@@ -14,6 +15,8 @@ import Http
 import Json.Decode
 import Json.Encode
 import PlanParsers.Json exposing (..)
+import Ports exposing (..)
+import Time
 
 
 type Page
@@ -29,6 +32,7 @@ type Msg
     | ChangeEmail String
     | ChangePlanText String
     | CreatePlan
+    | DumpModel ()
     | FinishLogin (Result Http.Error String)
     | FinishSavedPlans (Result Http.Error (List SavedPlan))
     | MouseEnteredPlanNode Plan
@@ -37,6 +41,7 @@ type Msg
     | RequestLogin
     | RequestLogout
     | RequestSavedPlans
+    | SendHeartbeat Time.Posix
     | StartLogin
     | ShowPlan String
     | SubmitPlan
@@ -58,11 +63,12 @@ type alias Model =
 
 
 type alias Flags =
-    ()
+    { sessionId : Maybe String
+    }
 
 
 init : Flags -> ( Model, Cmd Msg )
-init _ =
+init flags =
     ( { currPage = InputPage
       , currPlanText = ""
       , email = ""
@@ -71,7 +77,7 @@ init _ =
       , password = ""
       , savedPlans = []
       , selectedNode = Nothing
-      , sessionId = Nothing
+      , sessionId = flags.sessionId
       , username = ""
       }
     , Cmd.none
@@ -79,7 +85,7 @@ init _ =
 
 
 serverUrl =
-    "http://localhost:3001"
+    "http://localhost:3001/"
 
 
 
@@ -88,7 +94,11 @@ serverUrl =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    Sub.none
+    Sub.batch
+        [ dumpModel DumpModel
+        , Time.every (100 * 1000) SendHeartbeat
+        , onKeyPress <| keyDecoder model
+        ]
 
 
 
@@ -113,8 +123,13 @@ update msg model =
         CreatePlan ->
             ( { model | currPage = InputPage, currPlanText = "" }, Cmd.none )
 
+        DumpModel () ->
+            ( Debug.log "model" model, Cmd.none )
+
         FinishLogin (Ok sessionId) ->
-            ( { model | sessionId = Just sessionId, currPage = InputPage }, Cmd.none )
+            ( { model | sessionId = Just sessionId, currPage = InputPage }
+            , saveSessionId <| Just sessionId
+            )
 
         FinishLogin (Err error) ->
             ( { model | lastError = httpErrorString error }, Cmd.none )
@@ -145,6 +160,9 @@ update msg model =
             ( { model | currPage = SavedPlansPage }
             , getSavedPlans model.sessionId
             )
+
+        SendHeartbeat _ ->
+            ( model, sendHeartbeat model.sessionId )
 
         ShowPlan planText ->
             ( { model | currPlanText = planText, currPage = DisplayPage }
@@ -197,6 +215,39 @@ getSavedPlans sessionId =
         , tracker = Nothing
         , expect = Http.expectJson FinishSavedPlans decodeSavedPlans
         }
+
+
+sendHeartbeat : Maybe String -> Cmd Msg
+sendHeartbeat sessionId =
+    Http.request
+        { method = "POST"
+        , headers =
+            [ Http.header "SessionId" <| Maybe.withDefault "" sessionId ]
+        , url = serverUrl ++ "heartbeat"
+        , body = Http.emptyBody
+        , timeout = Nothing
+        , tracker = Nothing
+        , expect = Http.expectWhatever <| always NoOp
+        }
+
+
+keyDecoder : Model -> Json.Decode.Decoder Msg
+keyDecoder model =
+    Json.Decode.field "key" Json.Decode.string
+        |> Json.Decode.map (keyToMsg model)
+
+
+keyToMsg : Model -> String -> Msg
+keyToMsg model s =
+    case ( s, model.sessionId ) of
+        ( "s", Just id ) ->
+            RequestSavedPlans
+
+        ( "n", _ ) ->
+            CreatePlan
+
+        _ ->
+            NoOp
 
 
 
