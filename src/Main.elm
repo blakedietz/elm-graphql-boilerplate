@@ -1,6 +1,7 @@
 module Main exposing (main)
 
 import Attr
+import Auth exposing (..)
 import Browser
 import Browser.Events exposing (onKeyPress)
 import Color exposing (..)
@@ -10,14 +11,13 @@ import Element.Border as Border
 import Element.Events exposing (..)
 import Element.Font as Font
 import Element.Input as Input
-import Html
 import Http
 import Json.Decode
-import Json.Encode
 import PlanParsers.Json exposing (..)
 import PlanTree
 import Ports exposing (..)
 import Time
+import Utils exposing (httpErrorString)
 
 
 type Page
@@ -28,13 +28,11 @@ type Page
 
 
 type Msg
-    = ChangePassword String
-    | ChangeUserName String
+    = Auth Auth.Msg
     | ChangeEmail String
     | ChangePlanText String
     | CreatePlan
     | DumpModel ()
-    | FinishLogin (Result Http.Error String)
     | FinishSavedPlans (Result Http.Error (List SavedPlan))
     | MouseEnteredPlanNode Plan
     | MouseLeftPlanNode Plan
@@ -42,24 +40,19 @@ type Msg
     | RequestLogin
     | RequestLogout
     | RequestSavedPlans
-    | SendHeartbeat Time.Posix
-    | StartLogin
     | ShowPlan String
     | SubmitPlan
     | ToggleMenu
 
 
 type alias Model =
-    { currPage : Page
+    { auth : Auth.Model
+    , currPage : Page
     , currPlanText : String
     , email : String
     , isMenuOpen : Bool
-    , lastError : String
-    , password : String
     , savedPlans : List SavedPlan
     , selectedNode : Maybe Plan
-    , sessionId : Maybe String
-    , username : String
     }
 
 
@@ -70,16 +63,13 @@ type alias Flags =
 
 init : Flags -> ( Model, Cmd Msg )
 init flags =
-    ( { currPage = InputPage
+    ( { auth = Auth.init flags.sessionId
+      , currPage = InputPage
       , currPlanText = ""
       , email = ""
       , isMenuOpen = False
-      , lastError = ""
-      , password = ""
       , savedPlans = []
       , selectedNode = Nothing
-      , sessionId = flags.sessionId
-      , username = ""
       }
     , Cmd.none
     )
@@ -97,7 +87,7 @@ subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
         [ dumpModel DumpModel
-        , Time.every (100 * 1000) SendHeartbeat
+        , Time.every (100 * 1000) <| Auth << Auth.SendHeartbeat
         , onKeyPress <| keyDecoder model
         ]
 
@@ -109,11 +99,20 @@ subscriptions model =
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        ChangePassword s ->
-            ( { model | password = s }, Cmd.none )
+        Auth authMsg ->
+            let
+                ( authModel, authCmd ) =
+                    Auth.update serverUrl authMsg model.auth
 
-        ChangeUserName s ->
-            ( { model | username = s }, Cmd.none )
+                currPage =
+                    case authMsg of
+                        Auth.FinishLogin (Ok _) ->
+                            InputPage
+
+                        _ ->
+                            model.currPage
+            in
+            ( { model | auth = authModel, currPage = currPage }, Cmd.map Auth authCmd )
 
         ChangeEmail s ->
             ( { model | email = s }, Cmd.none )
@@ -127,20 +126,10 @@ update msg model =
         DumpModel () ->
             ( Debug.log "model" model, Cmd.none )
 
-        FinishLogin (Ok sessionId) ->
-            ( { model | sessionId = Just sessionId, currPage = InputPage }
-            , saveSessionId <| Just sessionId
-            )
-
-        FinishLogin (Err error) ->
-            ( { model | lastError = httpErrorString error }, Cmd.none )
-
         FinishSavedPlans (Ok savedPlans) ->
             ( { model | savedPlans = savedPlans }, Cmd.none )
 
-        FinishSavedPlans (Err error) ->
-            ( { model | lastError = httpErrorString error }, Cmd.none )
-
+        --                    ( { model | lastError = httpErrorString error }, Cmd.none )
         MouseEnteredPlanNode plan ->
             ( { model | selectedNode = Just plan }, Cmd.none )
 
@@ -151,7 +140,7 @@ update msg model =
             ( model, Cmd.none )
 
         RequestLogin ->
-            ( { model | currPage = LoginPage, password = "", username = "", email = "" }, Cmd.none )
+            ( { model | currPage = LoginPage }, Cmd.none )
 
         -- TODO fix this
         RequestLogout ->
@@ -159,22 +148,19 @@ update msg model =
 
         RequestSavedPlans ->
             ( { model | currPage = SavedPlansPage }
-            , getSavedPlans model.sessionId
+            , getSavedPlans model.auth.sessionId
             )
-
-        SendHeartbeat _ ->
-            ( model, sendHeartbeat model.sessionId )
 
         ShowPlan planText ->
             ( { model | currPlanText = planText, currPage = DisplayPage }
             , Cmd.none
             )
 
-        StartLogin ->
-            ( model, login model.username model.password )
-
         SubmitPlan ->
             ( { model | currPage = DisplayPage }, Cmd.none )
+
+        FinishSavedPlans _ ->
+            ( model, Cmd.none )
 
         ToggleMenu ->
             ( { model | isMenuOpen = not model.isMenuOpen }, Cmd.none )
@@ -182,26 +168,6 @@ update msg model =
 
 
 -- EFFECTS
-
-
-login : String -> String -> Cmd Msg
-login username password =
-    let
-        body =
-            Http.jsonBody <|
-                Json.Encode.object
-                    [ ( "userName", Json.Encode.string username )
-                    , ( "password", Json.Encode.string password )
-                    ]
-
-        responseDecoder =
-            Json.Decode.field "sessionId" Json.Decode.string
-    in
-    Http.post
-        { url = serverUrl ++ "login"
-        , body = body
-        , expect = Http.expectJson FinishLogin responseDecoder
-        }
 
 
 getSavedPlans : Maybe String -> Cmd Msg
@@ -215,20 +181,6 @@ getSavedPlans sessionId =
         , timeout = Nothing
         , tracker = Nothing
         , expect = Http.expectJson FinishSavedPlans decodeSavedPlans
-        }
-
-
-sendHeartbeat : Maybe String -> Cmd Msg
-sendHeartbeat sessionId =
-    Http.request
-        { method = "POST"
-        , headers =
-            [ Http.header "SessionId" <| Maybe.withDefault "" sessionId ]
-        , url = serverUrl ++ "heartbeat"
-        , body = Http.emptyBody
-        , timeout = Nothing
-        , tracker = Nothing
-        , expect = Http.expectWhatever <| always NoOp
         }
 
 
@@ -251,7 +203,7 @@ keyDecoder model =
 
 keyToMsg : Model -> String -> Msg
 keyToMsg model code =
-    case ( code, model.sessionId ) of
+    case ( code, model.auth.sessionId ) of
         ( "KeyS", Just id ) ->
             RequestSavedPlans
 
@@ -260,29 +212,6 @@ keyToMsg model code =
 
         _ ->
             NoOp
-
-
-
--- FUNCTIONS
-
-
-httpErrorString : Http.Error -> String
-httpErrorString error =
-    case error of
-        Http.BadBody message ->
-            "Unable to handle response: " ++ message
-
-        Http.BadStatus statusCode ->
-            "Server error: " ++ String.fromInt statusCode
-
-        Http.BadUrl url ->
-            "invalid URL: " ++ url
-
-        Http.NetworkError ->
-            "Network error"
-
-        Http.Timeout ->
-            "Request timeout"
 
 
 
@@ -321,14 +250,14 @@ loginPage : Model -> Element Msg
 loginPage model =
     column [ paddingXY 0 20, spacingXY 0 10, width (px 300), centerX ]
         [ Input.username Attr.input
-            { onChange = ChangeUserName
-            , text = model.username
+            { onChange = Auth << Auth.ChangeUserName
+            , text = model.auth.username
             , label = Input.labelAbove [] <| text "User name:"
             , placeholder = Nothing
             }
         , Input.currentPassword Attr.input
-            { onChange = ChangePassword
-            , text = model.password
+            { onChange = Auth << Auth.ChangePassword
+            , text = model.auth.password
             , label = Input.labelAbove [] <| text "Password:"
             , placeholder = Nothing
             , show = False
@@ -340,10 +269,10 @@ loginPage model =
             , placeholder = Nothing
             }
         , Input.button Attr.greenButton
-            { onPress = Just StartLogin
+            { onPress = Just <| Auth Auth.StartLogin
             , label = el [ centerX ] <| text "Login"
             }
-        , el Attr.error <| text model.lastError
+        , el Attr.error <| text model.auth.lastError
         ]
 
 
@@ -470,7 +399,7 @@ menuPanel model =
         items =
             -- TODO: Fix this to emit the right actions
             [ el [ pointer, onClick CreatePlan ] <| text "New plan" ]
-                ++ (case model.sessionId of
+                ++ (case model.auth.sessionId of
                         Just _ ->
                             [ el [ pointer, onClick RequestSavedPlans ] <|
                                 text "Saved plans"
